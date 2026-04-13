@@ -1,26 +1,26 @@
 # Scorecard: baseline_dense
-Generated: 2026-04-13 17:49
+Generated: 2026-04-13 21:16
 
 ## Summary
 
 | Metric | Average Score |
 |--------|--------------|
-| Faithfulness | 4.80/5 |
-| Relevance | 4.60/5 |
-| Context Recall | 5.00/5 |
-| Completeness | 3.80/5 |
+| Faithfulness | N/A |
+| Relevance | N/A |
+| Context Recall | N/A |
+| Completeness | N/A |
 
 ## Per-Question Results
 
 | ID | Category | Faithful | Relevant | Recall | Complete | Notes |
 |----|----------|----------|----------|--------|----------|-------|
-| q01 | SLA | 5 | 5 | 5 | 5 | Every claim in the answer is directly supported by |
-| q02 | Refund | 5 | 5 | 5 | 5 | Every claim in the answer is directly supported by |
-| q03 | Access Control | 5 | 5 | 5 | 5 | Every claim in the answer is directly supported by |
-| q04 | Refund | 3 | 5 | 5 | 3 | The answer correctly states that digital products  |
-| q05 | IT Helpdesk | 5 | 5 | 5 | 5 | Every claim in the answer is directly supported by |
-| q06 | SLA | 5 | 5 | 5 | 4 | Every claim in the answer is directly supported by |
-| q07 | Access Control | 5 | 5 | 5 | 2 | Every claim in the answer is directly supported by |
-| q08 | HR Policy | 5 | 5 | 5 | 5 | Every claim in the answer is directly supported by |
-| q09 | Insufficient Context | 5 | 5 | None | 2 | Every claim in the answer is directly supported by |
-| q10 | Refund | 5 | 1 | 5 | 2 | The model answer accurately reflects the lack of i |
+| q01 | SLA | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
+| q02 | Refund | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
+| q03 | Access Control | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
+| q04 | Refund | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
+| q05 | IT Helpdesk | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
+| q06 | SLA | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
+| q07 | Access Control | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
+| q08 | HR Policy | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
+| q09 | Insufficient Context | None | None | None | None | Judge error: Error code: 401 - {'error': {'message |
+| q10 | Refund | None | None | 0 | None | Judge error: Error code: 401 - {'error': {'message |
