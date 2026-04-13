@@ -147,10 +147,45 @@ def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any
         scores = bm25.get_scores(tokenized_query)
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     """
-    # TODO Sprint 3: Implement BM25 search
-    # Tạm thời return empty list
-    print("[retrieve_sparse] Chưa implement — Sprint 3")
-    return []
+    try:
+        from rank_bm25 import BM25Okapi
+        import chromadb
+        from index import CHROMA_DB_DIR
+    except ImportError as e:
+        print(f"[retrieve_sparse] Missing package: {e}. Run: pip install rank-bm25")
+        return []
+
+    # Load tất cả chunks từ ChromaDB
+    client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
+    collection = client.get_collection("rag_lab")
+    all_data = collection.get(include=["documents", "metadatas"])
+
+    documents = all_data["documents"]
+    metadatas = all_data["metadatas"]
+
+    if not documents:
+        return []
+
+    # Tokenize corpus và query
+    tokenized_corpus = [doc.lower().split() for doc in documents]
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    tokenized_query = query.lower().split()
+    scores = bm25.get_scores(tokenized_query)
+
+    # Lấy top_k indices theo score giảm dần
+    top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+    chunks = []
+    for idx in top_indices:
+        if scores[idx] > 0:  # Chỉ lấy chunk có score > 0
+            chunks.append({
+                "text": documents[idx],
+                "metadata": metadatas[idx],
+                "score": float(scores[idx]),
+            })
+
+    return chunks
 
 
 # =============================================================================
@@ -186,10 +221,41 @@ def retrieve_hybrid(
     - Corpus có cả câu tự nhiên VÀ tên riêng, mã lỗi, điều khoản
     - Query như "Approval Matrix" khi doc đổi tên thành "Access Control SOP"
     """
-    # TODO Sprint 3: Implement hybrid RRF
-    # Tạm thời fallback về dense
-    print("[retrieve_hybrid] Chưa implement RRF — fallback về dense")
-    return retrieve_dense(query, top_k)
+    RRF_K = 60  # Hằng số RRF tiêu chuẩn
+
+    # Bước 1: Lấy kết quả từ cả dense và sparse
+    dense_results = retrieve_dense(query, top_k=top_k)
+    sparse_results = retrieve_sparse(query, top_k=top_k)
+
+    # Bước 2: Tính RRF score cho mỗi chunk
+    # Dùng text làm key để merge (vì cùng chunk có thể xuất hiện ở cả 2 list)
+    doc_scores = {}   # text -> {"score": float, "chunk": dict}
+
+    for rank, chunk in enumerate(dense_results):
+        key = chunk["text"]
+        rrf = dense_weight * (1 / (RRF_K + rank + 1))
+        if key not in doc_scores:
+            doc_scores[key] = {"score": 0.0, "chunk": chunk}
+        doc_scores[key]["score"] += rrf
+
+    for rank, chunk in enumerate(sparse_results):
+        key = chunk["text"]
+        rrf = sparse_weight * (1 / (RRF_K + rank + 1))
+        if key not in doc_scores:
+            doc_scores[key] = {"score": 0.0, "chunk": chunk}
+        doc_scores[key]["score"] += rrf
+
+    # Bước 3: Sort theo RRF score giảm dần, trả về top_k
+    sorted_docs = sorted(doc_scores.values(), key=lambda x: x["score"], reverse=True)[:top_k]
+
+    return [
+        {
+            "text": item["chunk"]["text"],
+            "metadata": item["chunk"]["metadata"],
+            "score": item["score"],
+        }
+        for item in sorted_docs
+    ]
 
 
 # =============================================================================
@@ -227,9 +293,29 @@ def rerank(
     - Dense/hybrid trả về nhiều chunk nhưng có noise
     - Muốn chắc chắn chỉ 3-5 chunk tốt nhất vào prompt
     """
-    # TODO Sprint 3: Implement rerank
-    # Tạm thời trả về top_k đầu tiên (không rerank)
-    return candidates[:top_k]
+    if not candidates:
+        return []
+
+    try:
+        from sentence_transformers import CrossEncoder
+    except ImportError:
+        print("[rerank] Missing package. Run: pip install sentence-transformers")
+        return candidates[:top_k]
+
+    model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    pairs = [[query, chunk["text"]] for chunk in candidates]
+    scores = model.predict(pairs)
+
+    ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
+
+    return [
+        {
+            "text": chunk["text"],
+            "metadata": chunk["metadata"],
+            "score": float(score),
+        }
+        for chunk, score in ranked[:top_k]
+    ]
 
 
 # =============================================================================
@@ -262,9 +348,53 @@ def transform_query(query: str, strategy: str = "expansion") -> List[str]:
     - Decomposition: query hỏi nhiều thứ một lúc
     - HyDE: query mơ hồ, search theo nghĩa không hiệu quả
     """
-    # TODO Sprint 3: Implement query transformation
-    # Tạm thời trả về query gốc
-    return [query]
+    import json
+
+    if strategy == "expansion":
+        prompt = (
+            f"Given the query: '{query}'\n"
+            f"Generate 2-3 alternative phrasings or related terms. "
+            f"Include the original query as the first item. "
+            f"Use the same language as the query.\n"
+            f"Output ONLY a JSON array of strings, no explanation."
+        )
+    elif strategy == "decomposition":
+        prompt = (
+            f"Break down this complex query into 2-3 simpler sub-queries: '{query}'\n"
+            f"Include the original query as the first item. "
+            f"Use the same language as the query.\n"
+            f"Output ONLY a JSON array of strings, no explanation."
+        )
+    elif strategy == "hyde":
+        prompt = (
+            f"Write a short paragraph (3-5 sentences) that would be a perfect answer "
+            f"to the following question. Write it as if it's from an official document. "
+            f"Use the same language as the query.\n"
+            f"Question: '{query}'\n"
+            f"Output ONLY the paragraph, no explanation."
+        )
+    else:
+        return [query]
+
+    try:
+        response = call_llm(prompt)
+
+        if strategy == "hyde":
+            return [response.strip()]
+
+        # Parse JSON array từ LLM response
+        # Tìm JSON array trong response (có thể có text thừa)
+        start = response.find("[")
+        end = response.rfind("]") + 1
+        if start != -1 and end > start:
+            queries = json.loads(response[start:end])
+            if isinstance(queries, list) and all(isinstance(q, str) for q in queries):
+                return queries
+
+        return [query]
+    except Exception as e:
+        print(f"[transform_query] Error: {e}. Falling back to original query.")
+        return [query]
 
 
 # =============================================================================
@@ -513,7 +643,7 @@ def compare_retrieval_strategies(query: str) -> None:
     print(f"Query: {query}")
     print('='*60)
 
-    strategies = ["dense", "hybrid"]  # Thêm "sparse" sau khi implement
+    strategies = ["dense", "hybrid"]  # Baseline vs Hybrid (A/B test)
 
     for strategy in strategies:
         print(f"\n--- Strategy: {strategy} ---")
@@ -556,10 +686,10 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Lỗi: {e}")
 
-    # Uncomment sau khi Sprint 3 hoàn thành:
-    # print("\n--- Sprint 3: So sánh strategies ---")
-    # compare_retrieval_strategies("Approval Matrix để cấp quyền là tài liệu nào?")
-    # compare_retrieval_strategies("ERR-403-AUTH")
+    print("\n--- Sprint 3: So sánh Dense vs Hybrid ---")
+    compare_retrieval_strategies("Approval Matrix để cấp quyền là tài liệu nào?")
+    compare_retrieval_strategies("CRITICAL")
+    compare_retrieval_strategies("Khách hàng có thể yêu cầu hoàn tiền trong bao nhiêu ngày?")
 
     print("\n\nViệc cần làm Sprint 2:")
     print("  1. Implement retrieve_dense() — query ChromaDB")
