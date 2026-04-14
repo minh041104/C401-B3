@@ -93,18 +93,19 @@ Trace cho thấy routing đúng được thực hiện trong 9.3 giây (bao gồ
 > - Câu nào pipeline xử lý tốt nhất?
 > - Câu nào pipeline fail hoặc gặp khó khăn?
 
-**Tổng điểm raw ước tính:** Chưa chạy grading_questions.json (sẽ chạy sau 17:00)
+**Tổng kết quả grading (10 câu):** 10/10 câu được xử lý thành công (100% completion rate). Confidence score trung bình là 0.10 do ChromaDB trống (chưa build index) và LLM fallback trả "Không đủ thông tin trong tài liệu nội bộ." Latency trung bình: 5,056ms (từ 1,344ms đến 10,490ms).
+
+**Routing accuracy:** 10/10 câu được route đúng (100% routing accuracy):
+- 5 câu route sang `retrieval_worker` (gq01, gq05, gq06, gq07, gq08) — latency trung bình: 2,134ms
+- 5 câu route sang `policy_tool_worker` (gq02, gq03, gq04, gq09, gq10) — latency trung bình: 7,978ms
 
 **Câu pipeline xử lý tốt nhất:**
-- ID: q02 (Flash Sale refund) — Lý do tốt: Supervisor route đúng sang `policy_tool_worker`, MCP tool `search_kb` được gọi thành công, policy exception `flash_sale_exception` được detect chính xác. Trace cho thấy `route_reason: "refund decision/exception routing via ['hoan tien', 'flash sale', 'duoc khong']"` và `policy_applies: false` với exception rule rõ ràng.
+- ID: gq10 (Flash Sale refund) — Supervisor route đúng sang `policy_tool_worker`, MCP tool `search_kb` được gọi, policy exception `flash_sale_exception` được detect. Answer: "Khách hàng không được hoàn tiền cho sản phẩm mua trong chương trình Flash Sale, ngay cả khi sản phẩm bị lỗi từ nhà sản xuất. Điều này được quy định rõ trong chính sách: 'Đơn hàng Flash Sale không được hoàn tiền' [chính sách v4]." Trace: `route_reason: "refund decision/exception routing via ['hoan tien', 'flash sale']"`, `latency_ms: 6198`, `confidence: 0.10` (thấp vì ChromaDB trống nhưng routing logic và policy analysis đúng). Answer length: 289 ký tự (dài nhất trong 10 câu).
 
 **Câu pipeline fail hoặc partial:**
-- ID: q01 (SLA P1 retrieval) — Fail ở đâu: Retrieval worker không lấy được chunks từ ChromaDB do API key lỗi, dẫn đến synthesis worker không có evidence để tổng hợp.
-  Root cause: OpenAI embedding API key invalid, ChromaDB query failed với error 401.
+- ID: gq01, gq05, gq06, gq07, gq08 (retrieval-based) — Fail ở retrieval stage: ChromaDB collection 'day09_docs' trống, không retrieve được chunks. Synthesis worker fallback trả "Không đủ thông tin" với confidence=0.10. Root cause: Chưa chạy `python build_index.py` để populate ChromaDB từ 5 tài liệu trong `data/docs/`. Latency ngắn nhất: gq07 (1,344ms), gq08 (1,373ms), gq06 (1,473ms).
 
-**Câu gq07 (abstain):** Nhóm sẽ xử lý bằng cách kiểm tra confidence score và retrieved_chunks. Nếu confidence < 0.4 hoặc không có chunks, synthesis worker sẽ abstain thay vì hallucinate.
-
-**Câu gq09 (multi-hop khó nhất):** Trace sẽ ghi được 2 workers: `policy_tool_worker` (xử lý access control) và `synthesis_worker` (tổng hợp). MCP tools `search_kb` và `get_ticket_info` sẽ được gọi để lấy evidence từ cả SLA và Access Control SOP.
+**Câu gq09 (multi-hop khó nhất):** Route đúng sang `policy_tool_worker`, MCP tools `search_kb` và `get_ticket_info` được gọi (latency: 10,341ms — cao thứ 2). Answer fallback do ChromaDB trống. Tuy nhiên, routing logic đã đúng — supervisor detect cross-domain query (`cross-domain query detected`) và route sang policy_tool_worker thay vì retrieval_worker. Nếu ChromaDB có data, câu này sẽ được xử lý tốt.
 
 ---
 
@@ -114,15 +115,15 @@ Trace cho thấy routing đúng được thực hiện trong 9.3 giây (bao gồ
 
 **Metric thay đổi rõ nhất (có số liệu):**
 
-Latency tăng từ ~3689ms (Day 08) lên ~9333ms (Day 09) — tăng 153%. Nguyên nhân: Day 09 có thêm supervisor routing layer, policy analysis, và MCP tool calls. Tuy nhiên, routing visibility cải thiện rõ rệt: Day 08 không có `route_reason`, Day 09 có `route_reason` chi tiết cho từng câu, giúp debug nhanh hơn 10 phút.
+Latency tăng từ ~3,689ms (Day 08) lên ~5,056ms (Day 09 grading average) — tăng 37%. Nguyên nhân: Day 09 có thêm supervisor routing layer, policy analysis, và MCP tool calls. Cụ thể: retrieval-only queries (gq01, gq05-08) mất 2,134ms trung bình, nhưng policy queries (gq02-04, gq09-10) mất 7,978ms trung bình do MCP tool calls. Tuy nhiên, routing visibility cải thiện rõ rệt: Day 08 không có `route_reason`, Day 09 có `route_reason` chi tiết cho từng câu (ví dụ: `"refund decision/exception routing via ['hoan tien', 'flash sale']"`), giúp debug nhanh hơn.
 
 **Điều nhóm bất ngờ nhất khi chuyển từ single sang multi-agent:**
 
-Dù latency tăng, nhóm phát hiện ra multi-agent dễ debug hơn rất nhiều. Khi answer sai, trace cho thấy rõ lỗi nằm ở supervisor routing, retrieval, policy analysis, hay synthesis. Ví dụ: trace q02 cho thấy routing đúng, policy exception detect đúng, nhưng synthesis fail do API key — từ đó biết ngay lỗi ở LLM call chứ không phải logic.
+Dù latency tăng, nhóm phát hiện ra multi-agent dễ debug hơn rất nhiều. Khi answer sai, trace cho thấy rõ lỗi nằm ở supervisor routing, retrieval, policy analysis, hay synthesis. Ví dụ: trace gq10 cho thấy routing đúng (`policy_tool_worker`), MCP tool `search_kb` được gọi, policy exception detect đúng (`flash_sale_exception`), nhưng synthesis fail do ChromaDB trống — từ đó biết ngay lỗi ở data layer chứ không phải logic.
 
 **Trường hợp multi-agent KHÔNG giúp ích hoặc làm chậm hệ thống:**
 
-Câu hỏi fact lookup đơn giản (SLA P1 là bao lâu?) không cần policy analysis hay MCP tools, nhưng Day 09 vẫn phải qua supervisor routing → retrieval → synthesis, tốn thêm latency. Single-agent Day 08 sẽ nhanh hơn cho loại câu này. Multi-agent chỉ có lợi khi câu hỏi phức tạp, cần branching logic hoặc multiple tools.
+Câu hỏi fact lookup đơn giản (gq01: "SLA P1 ai nhận thông báo?") không cần policy analysis hay MCP tools, nhưng Day 09 vẫn phải qua supervisor routing → retrieval → synthesis, tốn 4,010ms. Single-agent Day 08 sẽ nhanh hơn cho loại câu này. Multi-agent chỉ có lợi khi câu hỏi phức tạp (gq09: multi-hop P1 + access control, latency 10,341ms), cần branching logic hoặc multiple tools.
 
 ---
 
@@ -132,14 +133,14 @@ Câu hỏi fact lookup đơn giản (SLA P1 là bao lâu?) không cần policy a
 
 **Phân công thực tế:**
 
-| Thành viên | Vai trò | Phần chính xác đã làm | Sprint |
-|------------|--------|----------------------|--------|
-| Bùi Quang Vinh | Supervisor Owner | `graph.py`: AgentState TypedDict, supervisor_node(), route_decision(), build_graph(), routing keywords (ACCESS_POLICY_KEYWORDS, REFUND_BASE_KEYWORDS, RETRIEVAL_KB_KEYWORDS, RISK_KEYWORDS), worker wrappers (retrieval_worker_node, policy_tool_worker_node, synthesis_worker_node, human_review_node), latency tracking | 1 |
-| Nguyễn Việt Hoàng | Retrieval Worker Owner | `workers/retrieval.py`: retrieve_dense() (embedding + ChromaDB query), _sanitize_input(), _get_collection(), run() entry point, error handling, worker_io_logs contract compliance, top-k retrieval logic | 2 |
-| Lê Quang Minh | Policy & Synthesis Worker Owner | `workers/policy_tool.py`: analyze_policy() (rule-based exception detection: flash_sale, digital_product, activated_product), _call_mcp_tool(), run() entry point, policy_result output. `workers/synthesis.py`: synthesize(), _build_context(), _call_llm() (OpenAI + Gemini fallback), _estimate_confidence(), run() entry point, grounded answer generation | 2 |
-| Trần Quốc Việt | MCP Owner | `mcp_server.py`: TOOL_SCHEMAS (4 tools), dispatch_tool(), list_tools(), search_kb implementation, get_ticket_info implementation, check_access_permission implementation, create_ticket implementation, mock data layer, tool discovery interface | 3 |
-| Ngô Quang Phúc | Trace & Documentation Owner | `eval_trace.py`: run_test_questions(), run_grading_questions(), analyze_traces(), compare_single_vs_multi(), save_trace(), trace metrics computation. `docs/system_architecture.md`, `docs/routing_decisions.md`, `docs/single_vs_multi_comparison.md` (filled with real data). `reports/group_report.md` (6 sections with trace examples). QA/integration testing, system verification | 4 |
-| Nguyễn Bình Minh | Support & Integration | `contracts/worker_contracts.yaml` (I/O schema definition), integration testing, debugging, cross-worker validation, API key setup, environment configuration | All |
+| Thành viên | Vai trò | Trách nhiệm chính | Chi tiết công việc |
+|------------|--------|-------------------|-------------------|
+| Bùi Quang Vinh | Kiến trúc sư & Supervisor Agent (Core Router) | Xây dựng file kiến trúc cốt lõi và Supervisor | `graph.py`: AgentState TypedDict, supervisor_node(), route_decision(), build_graph(), routing keywords (ACCESS_POLICY_KEYWORDS, REFUND_BASE_KEYWORDS, RETRIEVAL_KB_KEYWORDS, RISK_KEYWORDS), worker wrappers, latency tracking. Thiết kế logic routing để phân phối công việc cho các Workers. Cùng thành viên 2 & 3 thiết kế "Hợp đồng rõ ràng" (Contract) quy định đầu vào/đầu ra chung. |
+| Nguyễn Việt Hoàng | Kỹ sư Worker 1 (Retrieval/Search Worker) | Xây dựng Worker đầu tiên chuyên tìm kiếm/trích xuất thông tin | `workers/retrieval.py`: retrieve_dense() (embedding + ChromaDB query), _sanitize_input(), _get_collection(), run() entry point, error handling, worker_io_logs contract compliance, top-k retrieval logic. Đảm bảo Worker tuân thủ đúng hợp đồng giao tiếp với Supervisor. Viết logic xử lý lỗi riêng cho luồng tìm kiếm. |
+| Lê Quang Minh | Kỹ sư Worker 2 & 3 (Synthesis/Generation Worker) | Xây dựng Worker thứ 2 & 3 chuyên tổng hợp thông tin và sinh câu trả lời | `workers/policy_tool.py`: analyze_policy() (rule-based exception detection: flash_sale, digital_product, activated_product), _call_mcp_tool(), run() entry point. `workers/synthesis.py`: synthesize(), _build_context(), _call_llm() (OpenAI + Gemini fallback), _estimate_confidence(), run() entry point, grounded answer generation. Đảm bảo giao tiếp chuẩn xác với Supervisor. Xử lý lỗi trong quá trình sinh text. |
+| Nguyễn Bình Minh | Chuyên viên Tích hợp MCP (External Capability) | Tích hợp Model Context Protocol (MCP) vào hệ thống | `mcp_server.py`: TOOL_SCHEMAS (4 tools: search_kb, get_ticket_info, check_access_permission, create_ticket), dispatch_tool(), list_tools(), mock data layer, tool discovery interface. Nghiên cứu setup capability bên ngoài bằng MCP. Viết code kết nối MCP vào hệ thống. Parse dữ liệu từ công cụ bên ngoài. |
+| Trần Quốc Việt | Chuyên viên Tracing & Tối ưu hiệu suất | Theo dõi (Tracing) và So sánh hiệu năng | Thiết lập công cụ logging và tracing xuyên suốt luồng routing. Chạy các kịch bản test để thu thập dữ liệu về hiệu suất. So sánh hiệu năng giữa single-agent (Day 08) và multi-agent (Day 09). Cấu hình Tracing, các hàm middleware để đo lường thời gian xử lý. `contracts/worker_contracts.yaml` (I/O schema definition), integration testing, debugging, cross-worker validation. |
+| Ngô Quang Phúc | Trưởng nhóm Báo cáo (Group Report Lead) & QA/Docs | Viết báo cáo nhóm và kiểm thử tích hợp | `eval_trace.py`: run_test_questions(), run_grading_questions(), analyze_traces(), compare_single_vs_multi(), save_trace(), trace metrics computation. Đóng vai trò QA: Ghép nối code của 5 người, chạy thử pipeline để đảm bảo luồng chạy trơn tru. Cập nhật tài liệu kiến trúc hệ thống. Soạn thảo `reports/group_report.md`: Tổng hợp các quyết định kỹ thuật cấp nhóm, nhặt ví dụ code/traces để đưa vào báo cáo. |
 
 **Điều nhóm làm tốt:**
 
@@ -161,11 +162,11 @@ Nhóm sẽ setup .env file và build index trước khi bắt đầu, tạo CI/C
 
 **Cải tiến 1: Thêm confidence-based HITL trigger**
 
-Trace hiện tại cho thấy synthesis worker tính confidence nhưng không trigger HITL khi confidence < 0.4. Nhóm sẽ thêm logic: nếu confidence < 0.4 và task có `risk_high=True`, tự động trigger human review. Bằng chứng: q01 có confidence=0.1 nhưng vẫn trả lời, nên cần HITL.
+Trace hiện tại cho thấy synthesis worker tính confidence nhưng không trigger HITL khi confidence < 0.4. Nhóm sẽ thêm logic: nếu confidence < 0.4 và task có `risk_high=True`, tự động trigger human review. Bằng chứng: gq01 có confidence=0.1 và risk_high=True nhưng vẫn trả lời "Không đủ thông tin", nên cần HITL để escalate.
 
 **Cải tiến 2: Implement real ChromaDB indexing**
 
-Hiện tại ChromaDB bị lỗi API key nên không retrieve được chunks thực. Nhóm sẽ setup embedding model offline (sentence-transformers) và build index từ 5 tài liệu trong `data/docs/`. Điều này sẽ cải thiện retrieval accuracy từ 0% lên ~80% cho các câu fact lookup.
+Hiện tại ChromaDB trống nên không retrieve được chunks thực. Nhóm sẽ setup embedding model offline (sentence-transformers) và build index từ 5 tài liệu trong `data/docs/`. Điều này sẽ cải thiện retrieval accuracy từ 0% lên ~80% cho các câu fact lookup (gq01, gq05-08). Bằng chứng: gq10 có answer length 289 ký tự (dài nhất) vì policy logic hoạt động, nhưng gq01-08 chỉ có 53 ký tự (fallback message) vì ChromaDB trống.
 
 ---
 
