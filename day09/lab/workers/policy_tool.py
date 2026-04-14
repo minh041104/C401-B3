@@ -18,6 +18,7 @@ Gọi độc lập để test:
 
 import os
 import sys
+from datetime import datetime
 from typing import Optional
 
 WORKER_NAME = "policy_tool_worker"
@@ -160,21 +161,25 @@ def run(state: dict) -> dict:
     chunks = state.get("retrieved_chunks", [])
     needs_tool = state.get("needs_tool", False)
 
+    # Initialize state fields if not exist
     state.setdefault("workers_called", [])
     state.setdefault("history", [])
     state.setdefault("mcp_tools_used", [])
+    state.setdefault("worker_io_logs", [])
 
     state["workers_called"].append(WORKER_NAME)
 
+    # Contract-compliant worker_io log
     worker_io = {
         "worker": WORKER_NAME,
         "input": {
             "task": task,
-            "chunks_count": len(chunks),
+            "retrieved_chunks": chunks,  # Include full context
             "needs_tool": needs_tool,
         },
-        "output": None,
+        "output": {},
         "error": None,
+        "timestamp": datetime.now().isoformat(),
     }
 
     try:
@@ -190,7 +195,17 @@ def run(state: dict) -> dict:
 
         # Step 2: Phân tích policy
         policy_result = analyze_policy(task, chunks)
-        state["policy_result"] = policy_result
+        
+        # Contract-compliant policy_result format
+        contract_compliant_result = {
+            "policy_applies": policy_result["policy_applies"],
+            "policy_name": policy_result["policy_name"],
+            "exceptions_found": policy_result.get("exceptions_found", []),
+            "source": policy_result.get("source", []),
+            "policy_version_note": policy_result.get("policy_version_note", ""),
+        }
+        
+        state["policy_result"] = contract_compliant_result
 
         # Step 3: Nếu cần thêm info từ MCP (e.g., ticket status), gọi get_ticket_info
         if needs_tool and any(kw in task.lower() for kw in ["ticket", "p1", "jira"]):
@@ -198,22 +213,37 @@ def run(state: dict) -> dict:
             state["mcp_tools_used"].append(mcp_result)
             state["history"].append(f"[{WORKER_NAME}] called MCP get_ticket_info")
 
+        # Contract-compliant worker_io output
         worker_io["output"] = {
-            "policy_applies": policy_result["policy_applies"],
-            "exceptions_count": len(policy_result.get("exceptions_found", [])),
-            "mcp_calls": len(state["mcp_tools_used"]),
+            "policy_result": contract_compliant_result,
+            "mcp_tools_used": state["mcp_tools_used"].copy(),
+            "policy_applies": contract_compliant_result["policy_applies"],
+            "exceptions_count": len(contract_compliant_result["exceptions_found"]),
         }
+        
         state["history"].append(
-            f"[{WORKER_NAME}] policy_applies={policy_result['policy_applies']}, "
-            f"exceptions={len(policy_result.get('exceptions_found', []))}"
+            f"[{WORKER_NAME}] policy_applies={contract_compliant_result['policy_applies']}, "
+            f"exceptions={len(contract_compliant_result['exceptions_found'])}, "
+            f"mcp_calls={len(state['mcp_tools_used'])}"
         )
 
     except Exception as e:
-        worker_io["error"] = {"code": "POLICY_CHECK_FAILED", "reason": str(e)}
-        state["policy_result"] = {"error": str(e)}
+        # Contract-compliant error handling
+        error_obj = {"code": "POLICY_CHECK_FAILED", "reason": str(e)}
+        worker_io["error"] = error_obj
+        
+        # Fallback policy_result on error
+        state["policy_result"] = {
+            "policy_applies": False,
+            "policy_name": "error_fallback",
+            "exceptions_found": [],
+            "source": [],
+            "policy_version_note": f"Policy check failed: {str(e)}",
+        }
+        
         state["history"].append(f"[{WORKER_NAME}] ERROR: {e}")
 
-    state.setdefault("worker_io_logs", []).append(worker_io)
+    state["worker_io_logs"].append(worker_io)
     return state
 
 
@@ -222,39 +252,148 @@ def run(state: dict) -> dict:
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("Policy Tool Worker — Standalone Test")
-    print("=" * 50)
+    print("=" * 60)
+    print("Policy Tool Worker — Contract Compliance Test")
+    print("=" * 60)
 
     test_cases = [
         {
+            "name": "Flash Sale Exception",
             "task": "Khách hàng Flash Sale yêu cầu hoàn tiền vì sản phẩm lỗi — được không?",
             "retrieved_chunks": [
-                {"text": "Ngoại lệ: Đơn hàng Flash Sale không được hoàn tiền.", "source": "policy_refund_v4.txt", "score": 0.9}
+                {"text": "Ngoại lệ: Đơn hàng Flash Sale không được hoàn tiền theo Điều 3 chính sách v4.", "source": "policy_refund_v4.txt", "score": 0.9}
             ],
+            "expected_policy_applies": False,
+            "expected_exception_types": ["flash_sale_exception"],
         },
         {
+            "name": "License Key Exception",
             "task": "Khách hàng muốn hoàn tiền license key đã kích hoạt.",
             "retrieved_chunks": [
-                {"text": "Sản phẩm kỹ thuật số (license key, subscription) không được hoàn tiền.", "source": "policy_refund_v4.txt", "score": 0.88}
+                {"text": "Sản phẩm kỹ thuật số (license key, subscription) không được hoàn tiền theo Điều 3.", "source": "policy_refund_v4.txt", "score": 0.88}
             ],
+            "expected_policy_applies": False,
+            "expected_exception_types": ["digital_product_exception"],
         },
         {
+            "name": "Activated Product Exception",
+            "task": "Khách hàng yêu cầu hoàn tiền sản phẩm đã đăng ký và kích hoạt.",
+            "retrieved_chunks": [
+                {"text": "Sản phẩm đã kích hoạt hoặc đăng ký tài khoản không được hoàn tiền.", "source": "policy_refund_v4.txt", "score": 0.85}
+            ],
+            "expected_policy_applies": False,
+            "expected_exception_types": ["activated_exception"],
+        },
+        {
+            "name": "Valid Refund Case",
             "task": "Khách hàng yêu cầu hoàn tiền trong 5 ngày, sản phẩm lỗi, chưa kích hoạt.",
             "retrieved_chunks": [
                 {"text": "Yêu cầu trong 7 ngày làm việc, sản phẩm lỗi nhà sản xuất, chưa dùng.", "source": "policy_refund_v4.txt", "score": 0.85}
             ],
+            "expected_policy_applies": True,
+            "expected_exception_types": [],
+        },
+        {
+            "name": "No Evidence Case",
+            "task": "Khách hàng yêu cầu hoàn tiền nhưng không có tài liệu.",
+            "retrieved_chunks": [],
+            "expected_policy_applies": True,  # Default allow when no evidence
+            "expected_exception_types": [],
+        },
+        {
+            "name": "MCP Tool Case",
+            "task": "Kiểm tra policy cho ticket P1 khẩn cấp",
+            "retrieved_chunks": [],
+            "needs_tool": True,
+            "expected_policy_applies": True,
+            "expected_exception_types": [],
+            "expected_mcp_calls": ["search_kb", "get_ticket_info"],
         },
     ]
 
-    for tc in test_cases:
-        print(f"\n▶ Task: {tc['task'][:70]}...")
-        result = run(tc.copy())
-        pr = result.get("policy_result", {})
-        print(f"  policy_applies: {pr.get('policy_applies')}")
-        if pr.get("exceptions_found"):
-            for ex in pr["exceptions_found"]:
-                print(f"  exception: {ex['type']} — {ex['rule'][:60]}...")
-        print(f"  MCP calls: {len(result.get('mcp_tools_used', []))}")
+    all_passed = True
 
-    print("\n✅ policy_tool_worker test done.")
+    for tc in test_cases:
+        print(f"\n[TEST] {tc['name']}")
+        print(f"Task: {tc['task'][:70]}...")
+        
+        # Prepare test state
+        test_state = {
+            "task": tc["task"],
+            "retrieved_chunks": tc.get("retrieved_chunks", []),
+            "needs_tool": tc.get("needs_tool", False),
+        }
+        
+        # Run policy tool worker
+        result = run(test_state.copy())
+        
+        # Validate contract compliance
+        pr = result.get("policy_result", {})
+        
+        # Check 1: policy_result structure
+        required_fields = ["policy_applies", "policy_name", "exceptions_found", "source"]
+        for field in required_fields:
+            if field not in pr:
+                print(f"  ❌ FAIL: Missing field '{field}' in policy_result")
+                all_passed = False
+                continue
+        
+        # Check 2: policy_applies value
+        expected_applies = tc["expected_policy_applies"]
+        actual_applies = pr.get("policy_applies")
+        if actual_applies != expected_applies:
+            print(f"  ❌ FAIL: policy_applies expected {expected_applies}, got {actual_applies}")
+            all_passed = False
+        else:
+            print(f"  ✅ policy_applies: {actual_applies}")
+        
+        # Check 3: exception types
+        expected_exceptions = tc["expected_exception_types"]
+        actual_exceptions = [ex["type"] for ex in pr.get("exceptions_found", [])]
+        if set(actual_exceptions) != set(expected_exceptions):
+            print(f"  ❌ FAIL: exceptions expected {expected_exceptions}, got {actual_exceptions}")
+            all_passed = False
+        else:
+            for ex in pr.get("exceptions_found", []):
+                print(f"  ✅ exception: {ex['type']} — {ex['rule'][:60]}...")
+        
+        # Check 4: MCP tool calls
+        expected_mcp = tc.get("expected_mcp_calls", [])
+        actual_mcp = [call["tool"] for call in result.get("mcp_tools_used", [])]
+        if set(actual_mcp) != set(expected_mcp):
+            print(f"  ❌ FAIL: MCP calls expected {expected_mcp}, got {actual_mcp}")
+            all_passed = False
+        else:
+            for call in result.get("mcp_tools_used", []):
+                print(f"  ✅ MCP call: {call['tool']}")
+        
+        # Check 5: worker_io_logs format
+        worker_logs = result.get("worker_io_logs", [])
+        policy_logs = [log for log in worker_logs if log.get("worker") == WORKER_NAME]
+        if not policy_logs:
+            print(f"  ❌ FAIL: No worker_io_log found for {WORKER_NAME}")
+            all_passed = False
+        else:
+            latest_log = policy_logs[-1]
+            if "input" not in latest_log or "output" not in latest_log:
+                print(f"  ❌ FAIL: worker_io_log missing required fields")
+                all_passed = False
+            else:
+                print(f"  ✅ worker_io_log format compliant")
+        
+        # Check 6: history logging
+        history = result.get("history", [])
+        policy_entries = [h for h in history if WORKER_NAME in h]
+        if not policy_entries:
+            print(f"  ❌ FAIL: No history entries found for {WORKER_NAME}")
+            all_passed = False
+        else:
+            print(f"  ✅ history entries: {len(policy_entries)}")
+
+    print("\n" + "=" * 60)
+    if all_passed:
+        print("✅ ALL TESTS PASSED — Contract compliance validated!")
+        print("✅ Policy Tool Worker ready for integration")
+    else:
+        print("❌ SOME TESTS FAILED — Check implementation")
+    print("=" * 60)

@@ -34,35 +34,52 @@ Quy tắc nghiêm ngặt:
 def _call_llm(messages: list) -> str:
     """
     Gọi LLM để tổng hợp câu trả lời.
-    TODO Sprint 2: Implement với OpenAI hoặc Gemini.
+    Retry logic và validation để đảm bảo không bị placeholder.
     """
-    # Option A: OpenAI
+    def is_valid_answer(text: str) -> bool:
+        """Validate answer không phải placeholder hoặc quá ngắn."""
+        if not text or len(text.strip()) < 20:
+            return False
+        placeholders = ["[placeholder", "[template", "[example", "synthesize here", "your answer here"]
+        return not any(p.lower() in text.lower() for p in placeholders)
+
+    # Option A: OpenAI (ưu tiên)
     try:
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            temperature=0.1,  # Low temperature để grounded
-            max_tokens=500,
-        )
-        return response.choices[0].message.content
-    except Exception:
-        pass
+        
+        for attempt in range(2):  # Retry 1 lần nếu cần
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0.1,  # Low temperature để grounded
+                max_tokens=800,
+            )
+            answer = response.choices[0].message.content.strip()
+            if is_valid_answer(answer):
+                return answer
+        
+        # Nếu vẫn không valid → dùng Gemini
+    except Exception as e:
+        print(f"[SYNTHESIS] OpenAI failed: {e}")
 
-    # Option B: Gemini
+    # Option B: Gemini (backup)
     try:
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
         model = genai.GenerativeModel("gemini-1.5-flash")
-        combined = "\n".join([m["content"] for m in messages])
-        response = model.generate_content(combined)
-        return response.text
-    except Exception:
-        pass
+        
+        for attempt in range(2):  # Retry 1 lần
+            combined = "\n".join([m["content"] for m in messages])
+            response = model.generate_content(combined)
+            answer = response.text.strip()
+            if is_valid_answer(answer):
+                return answer
+    except Exception as e:
+        print(f"[SYNTHESIS] Gemini failed: {e}")
 
-    # Fallback: trả về message báo lỗi (không hallucinate)
-    return "[SYNTHESIS ERROR] Không thể gọi LLM. Kiểm tra API key trong .env."
+    # Fallback cuối: trả về thông báo rõ ràng
+    return "[SYNTHESIS ERROR] Không thể tạo câu trả lời. Vui lòng kiểm tra lại câu hỏi hoặc liên hệ IT support."
 
 
 def _build_context(chunks: list, policy_result: dict) -> str:
@@ -152,49 +169,82 @@ Hãy trả lời câu hỏi dựa vào tài liệu trên."""
 def run(state: dict) -> dict:
     """
     Worker entry point — gọi từ graph.py.
+    
+    Contract compliance:
+    - Input: task, retrieved_chunks, policy_result
+    - Output: final_answer, sources, confidence
+    - Logging: worker_io_logs với timestamp
     """
     task = state.get("task", "")
     chunks = state.get("retrieved_chunks", [])
     policy_result = state.get("policy_result", {})
 
+    # Initialize state fields nếu chưa có
     state.setdefault("workers_called", [])
     state.setdefault("history", [])
+    state.setdefault("worker_io_logs", [])
+    
     state["workers_called"].append(WORKER_NAME)
 
+    # Contract-compliant worker_io log
     worker_io = {
         "worker": WORKER_NAME,
         "input": {
             "task": task,
             "chunks_count": len(chunks),
             "has_policy": bool(policy_result),
+            "policy_applies": policy_result.get("policy_applies") if policy_result else None,
         },
-        "output": None,
+        "output": {},
         "error": None,
+        "timestamp": __import__('datetime').datetime.now().isoformat(),
     }
 
     try:
+        # Validate input cơ bản
+        if not task.strip():
+            raise ValueError("Task cannot be empty")
+            
+        # Gọi synthesize với validation
         result = synthesize(task, chunks, policy_result)
-        state["final_answer"] = result["answer"]
+        
+        # Validate output trước khi gán vào state
+        if not result.get("answer") or len(result["answer"].strip()) < 10:
+            raise ValueError("Generated answer too short or empty")
+            
+        if result["confidence"] < 0.1:
+            raise ValueError("Confidence too low")
+
+        # Gán kết quả vào state
+        state["final_answer"] = result["answer"].strip()
         state["sources"] = result["sources"]
         state["confidence"] = result["confidence"]
 
+        # Contract-compliant worker_io output
         worker_io["output"] = {
             "answer_length": len(result["answer"]),
             "sources": result["sources"],
             "confidence": result["confidence"],
+            "has_citations": any(source in result["answer"] for source in result["sources"]),
         }
+        
         state["history"].append(
-            f"[{WORKER_NAME}] answer generated, confidence={result['confidence']}, "
-            f"sources={result['sources']}"
+            f"[{WORKER_NAME}] answer generated, confidence={result['confidence']:.2f}, "
+            f"sources={len(result['sources'])}, length={len(result['answer'])}"
         )
 
     except Exception as e:
-        worker_io["error"] = {"code": "SYNTHESIS_FAILED", "reason": str(e)}
-        state["final_answer"] = f"SYNTHESIS_ERROR: {e}"
+        # Contract-compliant error handling
+        error_obj = {"code": "SYNTHESIS_FAILED", "reason": str(e)}
+        worker_io["error"] = error_obj
+        
+        # Fallback answer khi lỗi
+        state["final_answer"] = f"[SYNTHESIS ERROR] Không thể tạo câu trả lời: {str(e)}"
+        state["sources"] = []
         state["confidence"] = 0.0
         state["history"].append(f"[{WORKER_NAME}] ERROR: {e}")
 
-    state.setdefault("worker_io_logs", []).append(worker_io)
+    state["worker_io_logs"].append(worker_io)
     return state
 
 
@@ -203,44 +253,143 @@ def run(state: dict) -> dict:
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("Synthesis Worker — Standalone Test")
-    print("=" * 50)
+    print("=" * 60)
+    print("Synthesis Worker — Contract Compliance Test")
+    print("=" * 60)
 
-    test_state = {
-        "task": "SLA ticket P1 là bao lâu?",
-        "retrieved_chunks": [
-            {
-                "text": "Ticket P1: Phản hồi ban đầu 15 phút kể từ khi ticket được tạo. Xử lý và khắc phục 4 giờ. Escalation: tự động escalate lên Senior Engineer nếu không có phản hồi trong 10 phút.",
-                "source": "sla_p1_2026.txt",
-                "score": 0.92,
-            }
-        ],
-        "policy_result": {},
-    }
-
-    result = run(test_state.copy())
-    print(f"\nAnswer:\n{result['final_answer']}")
-    print(f"\nSources: {result['sources']}")
-    print(f"Confidence: {result['confidence']}")
-
-    print("\n--- Test 2: Exception case ---")
-    test_state2 = {
-        "task": "Khách hàng Flash Sale yêu cầu hoàn tiền vì lỗi nhà sản xuất.",
-        "retrieved_chunks": [
-            {
-                "text": "Ngoại lệ: Đơn hàng Flash Sale không được hoàn tiền theo Điều 3 chính sách v4.",
-                "source": "policy_refund_v4.txt",
-                "score": 0.88,
-            }
-        ],
-        "policy_result": {
-            "policy_applies": False,
-            "exceptions_found": [{"type": "flash_sale_exception", "rule": "Flash Sale không được hoàn tiền."}],
+    test_cases = [
+        {
+            "name": "Basic SLA Query",
+            "task": "SLA ticket P1 là bao lâu?",
+            "retrieved_chunks": [
+                {
+                    "text": "Ticket P1: Phản hồi ban đầu 15 phút kể từ khi ticket được tạo. Xử lý và khắc phục 4 giờ.",
+                    "source": "sla_p1_2026.txt",
+                    "score": 0.92,
+                }
+            ],
+            "policy_result": {},
+            "expected_confidence_min": 0.7,
         },
-    }
-    result2 = run(test_state2.copy())
-    print(f"\nAnswer:\n{result2['final_answer']}")
-    print(f"Confidence: {result2['confidence']}")
+        {
+            "name": "Policy Exception Case",
+            "task": "Khách hàng Flash Sale yêu cầu hoàn tiền vì lỗi nhà sản xuất.",
+            "retrieved_chunks": [
+                {
+                    "text": "Ngoại lệ: Đơn hàng Flash Sale không được hoàn tiền theo Điều 3 chính sách v4.",
+                    "source": "policy_refund_v4.txt",
+                    "score": 0.88,
+                }
+            ],
+            "policy_result": {
+                "policy_applies": False,
+                "exceptions_found": [{"type": "flash_sale_exception", "rule": "Flash Sale không được hoàn tiền."}],
+            },
+            "expected_confidence_min": 0.5,
+        },
+        {
+            "name": "No Evidence Case",
+            "task": "Cách reset password cho hệ thống XYZ?",
+            "retrieved_chunks": [],
+            "policy_result": {},
+            "expected_answer_contains": "Không đủ thông tin",
+        },
+        {
+            "name": "Multiple Sources Case",
+            "task": "Quy trình escalation cho incident critical?",
+            "retrieved_chunks": [
+                {
+                    "text": "Critical incident: Phải escalate trong vòng 15 phút.",
+                    "source": "escalation_guide.txt",
+                    "score": 0.95,
+                },
+                {
+                    "text": "Incident level 1: Gọi điện trực tiếp cho on-call engineer.",
+                    "source": "incident_handbook.txt",
+                    "score": 0.85,
+                }
+            ],
+            "policy_result": {},
+            "expected_sources_count_min": 2,
+        },
+        {
+            "name": "Empty Task Case",
+            "task": "",
+            "retrieved_chunks": [{"text": "Some content", "source": "test.txt", "score": 0.9}],
+            "policy_result": {},
+            "should_fail": True,
+        },
+    ]
 
-    print("\n✅ synthesis_worker test done.")
+    all_passed = True
+
+    for tc in test_cases:
+        print(f"\n[TEST] {tc['name']}")
+        print(f"Task: {tc['task'][:60]}...")
+        
+        try:
+            result = run({
+                "task": tc["task"],
+                "retrieved_chunks": tc["retrieved_chunks"],
+                "policy_result": tc["policy_result"],
+            })
+            
+            # Validate contract compliance
+            required_fields = ["final_answer", "sources", "confidence"]
+            for field in required_fields:
+                if field not in result:
+                    print(f"  ❌ FAIL: Missing field '{field}' in result")
+                    all_passed = False
+                    continue
+            
+            answer = result.get("final_answer", "")
+            sources = result.get("sources", [])
+            confidence = result.get("confidence", 0.0)
+            
+            print(f"  ✅ Answer length: {len(answer)}")
+            print(f"  ✅ Sources: {len(sources)}")
+            print(f"  ✅ Confidence: {confidence:.2f}")
+            
+            # Test-specific validations
+            if "expected_confidence_min" in tc:
+                if confidence < tc["expected_confidence_min"]:
+                    print(f"  ❌ FAIL: Confidence too low (expected >={tc['expected_confidence_min']})")
+                    all_passed = False
+            
+            if "expected_answer_contains" in tc:
+                if tc["expected_answer_contains"] not in answer:
+                    print(f"  ❌ FAIL: Answer doesn't contain expected text")
+                    all_passed = False
+            
+            if "expected_sources_count_min" in tc:
+                if len(sources) < tc["expected_sources_count_min"]:
+                    print(f"  ❌ FAIL: Not enough sources")
+                    all_passed = False
+            
+            if "should_fail" in tc and tc["should_fail"]:
+                if "ERROR" not in answer:
+                    print(f"  ❌ FAIL: Expected error but got success")
+                    all_passed = False
+                else:
+                    print(f"  ✅ Correctly failed with error")
+            
+            # Validate worker_io_logs
+            worker_logs = result.get("worker_io_logs", [])
+            if worker_logs:
+                last_log = worker_logs[-1]
+                if last_log.get("worker") != WORKER_NAME:
+                    print(f"  ❌ FAIL: worker_io_log missing or invalid")
+                    all_passed = False
+                else:
+                    print(f"  ✅ worker_io_log format compliant")
+            
+        except Exception as e:
+            print(f"  ❌ FAIL: Exception during test: {e}")
+            all_passed = False
+
+    print("\n" + "=" * 60)
+    if all_passed:
+        print("✅ ALL TESTS PASSED — Contract compliance verified")
+    else:
+        print("❌ SOME TESTS FAILED — Check implementation")
+    print("=" * 60)
