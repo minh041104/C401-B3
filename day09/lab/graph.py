@@ -11,9 +11,14 @@ Run:
 import json
 import os
 import re
+import sys
 import unicodedata
 from datetime import datetime
 from typing import Literal, Optional, TypedDict
+
+from workers.policy_tool import run as policy_tool_run
+from workers.retrieval import run as retrieval_run
+from workers.synthesis import run as synthesis_run
 
 
 class AgentState(TypedDict):
@@ -179,6 +184,53 @@ def _unique(items: list[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
 
+def _clone_value(value):
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, dict):
+        return dict(value)
+    return value
+
+
+def _console_text(value) -> str:
+    text = str(value)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
+def _record_worker_failure(
+    state: AgentState,
+    worker_name: str,
+    error_code: str,
+    error: Exception,
+    fallback_updates: dict,
+) -> AgentState:
+    state.setdefault("history", [])
+    state.setdefault("workers_called", [])
+    state.setdefault("worker_io_logs", [])
+
+    if not state["workers_called"] or state["workers_called"][-1] != worker_name:
+        state["workers_called"].append(worker_name)
+
+    safe_updates = {
+        key: _clone_value(value) for key, value in fallback_updates.items()
+    }
+    for key, value in safe_updates.items():
+        state[key] = value
+
+    reason = str(error)
+    state["history"].append(f"[{worker_name}] wrapper ERROR: {reason}")
+    state["worker_io_logs"].append(
+        {
+            "worker": worker_name,
+            "input": {"task": state.get("task", "")},
+            "output": safe_updates,
+            "error": {"code": error_code, "reason": reason},
+        }
+    )
+    return state
+
+
 # -----------------------------------------------------------------------------
 # 1. Supervisor node
 # -----------------------------------------------------------------------------
@@ -301,8 +353,8 @@ def human_review_node(state: AgentState) -> AgentState:
     state["workers_called"].append("human_review")
 
     print("\n[HITL TRIGGERED]")
-    print(f"  Task   : {state['task']}")
-    print(f"  Reason : {state['route_reason']}")
+    print(f"  Task   : {_console_text(state['task'])}")
+    print(f"  Reason : {_console_text(state['route_reason'])}")
     print("  Action : Auto-approving in lab mode\n")
 
     state["supervisor_route"] = "retrieval_worker"
@@ -312,69 +364,67 @@ def human_review_node(state: AgentState) -> AgentState:
 
 # -----------------------------------------------------------------------------
 # 4. Worker wrappers
-# Member 2 and 3 own the actual worker implementations.
-# Keep the wrappers as placeholders until their TODOs are complete.
+# Wrappers keep the graph boundary stable and guard worker failures.
 # -----------------------------------------------------------------------------
-
-# TODO Sprint 2: Uncomment after workers are finalized
-# from workers.retrieval import run as retrieval_run
-# from workers.policy_tool import run as policy_tool_run
-# from workers.synthesis import run as synthesis_run
 
 
 def retrieval_worker_node(state: AgentState) -> AgentState:
     """Wrapper for retrieval worker."""
-    # TODO Sprint 2: Replace with retrieval_run(state)
-    state["workers_called"].append("retrieval_worker")
-    state["history"].append("[retrieval_worker] called")
-
-    state["retrieved_chunks"] = [
-        {
-            "text": "SLA P1: first response 15 minutes, resolution 4 hours.",
-            "source": "sla_p1_2026.txt",
-            "score": 0.92,
-        }
-    ]
-    state["retrieved_sources"] = ["sla_p1_2026.txt"]
-    state["history"].append(
-        f"[retrieval_worker] retrieved {len(state['retrieved_chunks'])} chunks"
-    )
-    return state
+    try:
+        return retrieval_run(state)
+    except Exception as error:
+        return _record_worker_failure(
+            state,
+            worker_name="retrieval_worker",
+            error_code="RETRIEVAL_FAILED",
+            error=error,
+            fallback_updates={
+                "retrieved_chunks": [],
+                "retrieved_sources": [],
+            },
+        )
 
 
 def policy_tool_worker_node(state: AgentState) -> AgentState:
     """Wrapper for policy/tool worker."""
-    # TODO Sprint 2: Replace with policy_tool_run(state)
-    state["workers_called"].append("policy_tool_worker")
-    state["history"].append("[policy_tool_worker] called")
-
-    state["policy_result"] = {
-        "policy_applies": True,
-        "policy_name": "refund_policy_v4",
-        "exceptions_found": [],
-        "source": "policy_refund_v4.txt",
-    }
-    state["history"].append("[policy_tool_worker] policy check complete")
-    return state
+    try:
+        return policy_tool_run(state)
+    except Exception as error:
+        return _record_worker_failure(
+            state,
+            worker_name="policy_tool_worker",
+            error_code="POLICY_CHECK_FAILED",
+            error=error,
+            fallback_updates={
+                "policy_result": {
+                    "policy_applies": False,
+                    "policy_name": "error_fallback",
+                    "exceptions_found": [],
+                    "source": [],
+                    "policy_version_note": str(error),
+                }
+            },
+        )
 
 
 def synthesis_worker_node(state: AgentState) -> AgentState:
     """Wrapper for synthesis worker."""
-    # TODO Sprint 2: Replace with synthesis_run(state)
-    state["workers_called"].append("synthesis_worker")
-    state["history"].append("[synthesis_worker] called")
-
-    chunks = state.get("retrieved_chunks", [])
-    sources = state.get("retrieved_sources", [])
-    state["final_answer"] = (
-        f"[PLACEHOLDER] Final answer synthesized from {len(chunks)} chunks."
-    )
-    state["sources"] = sources
-    state["confidence"] = 0.75
-    state["history"].append(
-        f"[synthesis_worker] answer generated, confidence={state['confidence']}"
-    )
-    return state
+    try:
+        return synthesis_run(state)
+    except Exception as error:
+        return _record_worker_failure(
+            state,
+            worker_name="synthesis_worker",
+            error_code="SYNTHESIS_FAILED",
+            error=error,
+            fallback_updates={
+                "final_answer": (
+                    f"[SYNTHESIS ERROR] Khong the tao cau tra loi: {error}"
+                ),
+                "sources": [],
+                "confidence": 0.0,
+            },
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -442,6 +492,9 @@ def save_trace(state: AgentState, output_dir: str = "./artifacts/traces") -> str
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     print("=" * 60)
     print("Day 09 Lab - Supervisor-Worker Graph")
     print("=" * 60)
@@ -453,15 +506,15 @@ if __name__ == "__main__":
     ]
 
     for query in test_queries:
-        print(f"\n> Query: {query}")
+        print(f"\n> Query: {_console_text(query)}")
         result = run_graph(query)
-        print(f"  Route      : {result['supervisor_route']}")
-        print(f"  Reason     : {result['route_reason']}")
-        print(f"  Workers    : {result['workers_called']}")
-        print(f"  Answer     : {result['final_answer'][:100]}...")
-        print(f"  Confidence : {result['confidence']}")
-        print(f"  Latency    : {result['latency_ms']}ms")
+        print(f"  Route      : {_console_text(result['supervisor_route'])}")
+        print(f"  Reason     : {_console_text(result['route_reason'])}")
+        print(f"  Workers    : {_console_text(result['workers_called'])}")
+        print(f"  Answer     : {_console_text(result['final_answer'][:100])}...")
+        print(f"  Confidence : {_console_text(result['confidence'])}")
+        print(f"  Latency    : {_console_text(result['latency_ms'])}ms")
         trace_file = save_trace(result)
-        print(f"  Trace saved: {trace_file}")
+        print(f"  Trace saved: {_console_text(trace_file)}")
 
-    print("\nGraph smoke test complete. Worker TODOs remain with member 2 and 3.")
+    print("\nGraph smoke test complete.")
