@@ -33,35 +33,18 @@ MAX_TOP_K = 20
 
 def _get_embedding_fn():
     """
-    Trả về embedding function.
-    TODO Sprint 1: Implement dùng OpenAI hoặc Sentence Transformers.
+    Trả về embedding function dùng OpenAI text-embedding-3-small.
+    Phải khớp với embedding model dùng trong build_index.py.
     """
-    # Option A: Sentence Transformers (offline, không cần API key)
-    try:
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        def embed(text: str) -> list:
-            return model.encode([text])[0].tolist()
-        return embed
-    except ImportError:
-        pass
-
-    # Option B: OpenAI (cần API key)
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        def embed(text: str) -> list:
-            resp = client.embeddings.create(input=text, model="text-embedding-3-small")
-            return resp.data[0].embedding
-        return embed
-    except ImportError:
-        pass
-
-    # Fallback: random embeddings cho test (KHÔNG dùng production)
-    import random
+    import os
+    from openai import OpenAI
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set. Check .env file.")
+    oai = OpenAI(api_key=api_key)
     def embed(text: str) -> list:
-        return [random.random() for _ in range(384)]
-    print("[WARN] Using random embeddings (test only). Install sentence-transformers.")
+        resp = oai.embeddings.create(input=text, model="text-embedding-3-small")
+        return resp.data[0].embedding
     return embed
 
 
