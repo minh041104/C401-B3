@@ -42,12 +42,12 @@ graph TD
 
 | Thành phần | Input | Output | Owner nhóm |
 |------------|-------|--------|--------------|
-| Ingest | `data/raw/policy_export_dirty.csv` | raw_records + run_id | Người 1 |
-| Transform | raw_records | cleaned_records (6) | Người 2 |
-| Quality | cleaned_records | validated_records + quarantine (4) | Người 3 |
-| Infrastructure | validated_records | deployment + storage | Người 4 |
-| Monitor | run manifest | freshness alerts | Người 5 |
-| Embed + Grading | validated_records | vectors + grading artifacts | Người 6 |
+| Ingest | `data/raw/policy_export_dirty.csv` | raw_records + run_id | Trần Quốc Việt |
+| Transform | raw_records | cleaned_records (6) | Nguyễn Việt Hoàng|
+| Quality | cleaned_records | validated_records + quarantine (4) | Ngô Quang Phúc |
+| Infrastructure | validated_records | deployment + storage | Bùi Quang Vinh |
+| Monitor | run manifest | freshness alerts | Nguyễn Bình Minh |
+| Embed + Grading | validated_records | vectors + grading artifacts | Lê Quang Minh |
 
 ---
 
