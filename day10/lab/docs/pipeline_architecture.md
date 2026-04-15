@@ -1,7 +1,7 @@
 # Kiến trúc pipeline — Lab Day 10
 
 **Nhóm:** C401-B3  
-**Cập nhật:** 2026-04-15
+**Cập nhật:** 15-04-2026
 
 ---
 
@@ -20,25 +20,34 @@ graph TD
     I[Freshness Check] -->|SLA 24h| J{Exported At<br/>120h old}
     K[Run ID Tracking] -->|manifest| L[Run Manifest<br/>sprint4-final]
     
-    style A fill:#ffcccc
-    style E fill:#ccffcc
-    style F fill:#ffcc99
-    style H fill:#cce5ff
+    style A fill:#ff6b6b,stroke:#333,stroke-width:2px,color:#000
+    style B fill:#4ecdc4,stroke:#333,stroke-width:2px,color:#000
+    style C fill:#45b7d1,stroke:#333,stroke-width:2px,color:#000
+    style D fill:#96ceb4,stroke:#333,stroke-width:2px,color:#000
+    style E fill:#51cf66,stroke:#333,stroke-width:2px,color:#000
+    style F fill:#ff922b,stroke:#333,stroke-width:2px,color:#000
+    style G fill:#339af0,stroke:#333,stroke-width:2px,color:#fff
+    style H fill:#5f3dc4,stroke:#333,stroke-width:2px,color:#fff
+    style I fill:#f06595,stroke:#333,stroke-width:2px,color:#fff
+    style J fill:#ff8787,stroke:#333,stroke-width:2px,color:#000
+    style K fill:#cc5de8,stroke:#333,stroke-width:2px,color:#fff
+    style L fill:#868e96,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 > Vẽ thêm: điểm đo **freshness** (120h > 24h SLA), chỗ ghi **run_id** (sprint4-final), và file **quarantine** (4 records failed quality).
 
 ---
 
-## 2. Ranh giới trách nhiệm
+## 2. Ranh giới trách nhiệm (6 người)
 
 | Thành phần | Input | Output | Owner nhóm |
 |------------|-------|--------|--------------|
 | Ingest | `data/raw/policy_export_dirty.csv` | raw_records + run_id | Người 1 |
 | Transform | raw_records | cleaned_records (6) | Người 2 |
 | Quality | cleaned_records | validated_records + quarantine (4) | Người 3 |
-| Embed | validated_records | vectors in day10_kb | Người 6 |
+| Infrastructure | validated_records | deployment + storage | Người 4 |
 | Monitor | run manifest | freshness alerts | Người 5 |
+| Embed + Grading | validated_records | vectors + grading artifacts | Người 6 |
 
 ---
 
