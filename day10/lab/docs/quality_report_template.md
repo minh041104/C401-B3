@@ -1,48 +1,147 @@
-# Quality report — Lab Day 10 (nhóm)
+# Quality Report — Lab Day 10 (nhóm)
 
-**run_id:** _______________  
-**Ngày:** _______________
-
----
-
-## 1. Tóm tắt số liệu
-
-| Chỉ số | Trước | Sau | Ghi chú |
-|--------|-------|-----|---------|
-| raw_records | | | |
-| cleaned_records | | | |
-| quarantine_records | | | |
-| Expectation halt? | | | |
+**run_id:** *(điền sau khi chạy pipeline, ví dụ `sprint2-clean` hoặc UUID sinh bởi `etl_pipeline.py`)*
+**Ngày chạy:** *(điền ngày thực tế)*
+**Người phụ trách quality:** Ngô Quang Phúc (Người 3)
 
 ---
 
-## 2. Before / after retrieval (bắt buộc)
+## 1. Tóm tắt số liệu pipeline
 
-> Đính kèm hoặc dẫn link tới `artifacts/eval/before_after_eval.csv` (hoặc 2 file before/after).
+| Chỉ số | Dữ liệu bẩn (trước fix) | Sau pipeline chuẩn | Ghi chú |
+|---|---|---|---|
+| `raw_records` | 10 | 10 | Không thay đổi nguồn |
+| `cleaned_records` | *(điền)* | *(điền)* | Sau clean + dedupe |
+| `quarantine_records` | *(điền)* | *(điền)* | Tổng bị loại |
+| Expectation halt? | *(có/không)* | Không | Chuẩn = exit 0 |
 
-**Câu hỏi then chốt:** refund window (`q_refund_window`)  
-**Trước:** (copy dòng CSV hoặc paste top-k)  
-**Sau:**
+*Lý do quarantine điển hình trong bộ mẫu:*
 
-**Merit (khuyến nghị):** versioning HR — `q_leave_version` (`contains_expected`, `hits_forbidden`, cột `top1_doc_expected`)
-
-**Trước:**  
-**Sau:**
-
----
-
-## 3. Freshness & monitor
-
-> Kết quả `freshness_check` (PASS/WARN/FAIL) và giải thích SLA bạn chọn.
-
----
-
-## 4. Corruption inject (Sprint 3)
-
-> Mô tả cố ý làm hỏng dữ liệu kiểu gì (duplicate / stale / sai format) và cách phát hiện.
+| reason | count |
+|---|---|
+| `unknown_doc_id` (legacy_catalog_xyz_zzz) | 1 |
+| `stale_hr_policy_effective_date` (HR 2025-01-01) | 1 |
+| `missing_chunk_text` (dòng 5 — empty text) | 1 |
+| `duplicate_chunk_text` (dòng 2 = dòng 1) | 1 |
 
 ---
 
-## 5. Hạn chế & việc chưa làm
+## 2. Expectation Suite — danh sách đầy đủ
 
-- …
+| ID | Tên | Severity | Pass khi pipeline chuẩn | Fail khi inject |
+|---|---|---|---|---|
+| E1 | `min_one_row` | **halt** | ✅ | Khi quarantine hết |
+| E2 | `no_empty_doc_id` | **halt** | ✅ | Khi doc_id rỗng |
+| E3 | `refund_no_stale_14d_window` | **halt** | ✅ | `--no-refund-fix` |
+| E4 | `chunk_min_length_8` | warn | ✅ | Inject chunk < 8 ký tự |
+| E5 | `effective_date_iso_yyyy_mm_dd` | **halt** | ✅ | Sai format ngày |
+| E6 | `hr_leave_no_stale_10d_annual` | **halt** | ✅ | `--skip-validate` |
+| **E7** | `each_critical_doc_has_min_chunks` | **halt** | ✅ | Quarantine hết 1 doc |
+| **E8** | `no_duplicate_chunk_ids` | **halt** | ✅ | chunk_id bị trùng |
+| **E9** | `chunk_text_reasonable_length` | warn | ✅ | Chunk > 2 000 ký tự |
+
+**Quy tắc halt vs warn:**
+- **halt** → pipeline dừng, không publish lên vector store (dữ liệu sai hoặc thiếu nghiêm trọng).
+- **warn** → pipeline tiếp tục, ghi cảnh báo vào log, team cần xem lại chunking/format.
+
+---
+
+## 3. Metric impact của expectation mới (E7 · E8 · E9)
+
+### E7 — `each_critical_doc_has_min_chunks`
+
+> **Kịch bản chứng minh:** Inject effective_date sai cho toàn bộ chunk `hr_leave_policy`
+> → cleaning_rules quarantine hết → `doc_chunk_counts["hr_leave_policy"] = 0` → **E7 HALT**.
+
+| Scenario | `hr_leave_policy` chunks | E7 |
+|---|---|---|
+| Pipeline chuẩn | ≥ 1 | PASS |
+| Inject sai ngày toàn bộ HR | 0 | **HALT** |
+
+### E8 — `no_duplicate_chunk_ids`
+
+> **Kịch bản chứng minh:** Nếu `seq` bị reset về 0 giữa chừng (bug trong entrypoint) hoặc
+> cùng `doc_id + chunk_text` sinh từ 2 lần gọi khác nhau → hash trùng → **E8 HALT**.
+
+| Scenario | duplicate_chunk_ids | E8 |
+|---|---|---|
+| Pipeline chuẩn (dedupe bởi E2 cleaning) | 0 | PASS |
+| Bug seq-reset | > 0 | **HALT** |
+
+### E9 — `chunk_text_reasonable_length`
+
+> **Kịch bản chứng minh:** Inject 1 chunk ghép nhiều đoạn dài > 2 000 ký tự →
+> embedding model (MiniLM) cắt ngầm → retrieval kém → E9 WARN (không halt, nhưng ghi log).
+
+| Scenario | chunks > 2 000 ký tự | E9 |
+|---|---|---|
+| Bộ mẫu gốc | 0 | PASS (warn không kích) |
+| Inject chunk dài | ≥ 1 | **WARN** |
+
+---
+
+## 4. Before / after retrieval (bắt buộc)
+
+> Đính kèm file `artifacts/eval/before_after_eval.csv` sau khi chạy Người 5 (eval_retrieval.py).
+
+**Câu then chốt: `q_refund_window`**
+
+| Scenario | `contains_expected` | `hits_forbidden` | Ghi chú |
+|---|---|---|---|
+| **Before** (`--no-refund-fix --skip-validate`) | *(điền)* | yes | Còn chunk "14 ngày" |
+| **After** (pipeline chuẩn) | yes | no | Đã fix 7 ngày, E3 PASS |
+
+**Merit: `q_leave_version` (HR conflict)**
+
+| Scenario | `contains_expected` | `hits_forbidden` | `top1_doc_id` |
+|---|---|---|---|
+| **Before** (stale HR 2025 còn trong index) | *(điền)* | yes | *(điền)* |
+| **After** (pipeline chuẩn) | yes | no | `hr_leave_policy` |
+
+---
+
+## 5. Freshness & monitor
+
+> *(Điền sau khi Người 4 hoàn thiện `monitoring/freshness_check.py`)*
+
+Kết quả lệnh:
+```
+python etl_pipeline.py freshness --manifest artifacts/manifests/manifest_<run-id>.json
+```
+
+| Trạng thái | Ý nghĩa |
+|---|---|
+| **PASS** | Manifest mới hơn SLA (vd. < 24h) |
+| **WARN** | Manifest cũ 24–48h — cần chạy lại pipeline |
+| **FAIL** | Manifest quá cũ (> 48h) hoặc không tồn tại |
+
+---
+
+## 6. Corruption inject (Sprint 3)
+
+**Cách inject:**
+```bash
+python etl_pipeline.py run --run-id inject-bad --no-refund-fix --skip-validate
+python eval_retrieval.py --out artifacts/eval/after_inject_bad.csv
+```
+
+**Những gì bị phá vỡ:**
+- `--no-refund-fix`: chunk "14 ngày làm việc" còn trong index → E3 sẽ fail nếu không `--skip-validate`.
+- `--skip-validate`: bỏ qua toàn bộ expectation suite → publish dữ liệu bẩn.
+- Kết quả eval: `q_refund_window` → `hits_forbidden=yes`.
+
+**Bằng chứng so sánh:** xem 2 file CSV trong `artifacts/eval/`:
+
+| File | Scenario |
+|---|---|
+| `before_after_eval.csv` | Pipeline chuẩn — after fix |
+| `after_inject_bad.csv` | Sau inject — dữ liệu bẩn |
+
+---
+
+## 7. Hạn chế & việc chưa làm
+
+- E9 chỉ là `warn` — chưa tự động re-chunk khi vượt ngưỡng.
+- Chưa có expectation kiểm tra `exported_at` so với ngày hiện tại (freshness từ góc expectation).
+- Grading JSONL cần chạy riêng (`grading_run.py`) — xem Người 6.
+
