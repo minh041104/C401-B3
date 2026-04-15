@@ -6,3 +6,6 @@ chromadb>=0.4.22
 sentence-transformers>=2.6.0
 pyyaml>=6.0.1
 pytest>=8.0.0
+
+# Optional: bật cho eval_retrieval.py --llm-judge (cần OPENAI_API_KEY)
+openai>=1.40.0
