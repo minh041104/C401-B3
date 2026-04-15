@@ -25,7 +25,7 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument(
         "--questions",
-        default=str(ROOT / "data" / "grading_questions.json"),
+        default=str(ROOT / "artifacts" / "eval" / "grading_questions.json"),
     )
     p.add_argument(
         "--out",
@@ -42,46 +42,84 @@ def main() -> int:
         return 1
 
     qpath = Path(args.questions)
-    qs = json.loads(qpath.read_text(encoding="utf-8"))
+    if not qpath.exists():
+        print(f"ERROR: Questions file not found: {qpath}", file=sys.stderr)
+        return 1
+    
+    try:
+        qs = json.loads(qpath.read_text(encoding="utf-8"))
+        print(f"Loaded {len(qs)} grading questions from {qpath}")
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"ERROR: Failed to load questions: {e}", file=sys.stderr)
+        return 1
     db_path = os.environ.get("CHROMA_DB_PATH", str(ROOT / "chroma_db"))
     collection_name = os.environ.get("CHROMA_COLLECTION", "day10_kb")
     model_name = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
-    client = chromadb.PersistentClient(path=db_path)
-    emb = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name)
-    col = client.get_collection(name=collection_name, embedding_function=emb)
+    try:
+        client = chromadb.PersistentClient(path=db_path)
+        emb = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name)
+        col = client.get_collection(name=collection_name, embedding_function=emb)
+        print(f"Connected to ChromaDB collection '{collection_name}' with {col.count()} documents")
+    except Exception as e:
+        print(f"ERROR: Failed to connect to ChromaDB: {e}", file=sys.stderr)
+        return 1
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     with out.open("w", encoding="utf-8") as f:
-        for q in qs:
+        print(f"Processing {len(qs)} grading questions...")
+        for i, q in enumerate(qs, 1):
             text = q["question"]
-            res = col.query(query_texts=[text], n_results=args.top_k)
-            docs = (res.get("documents") or [[]])[0]
-            metas = (res.get("metadatas") or [[]])[0]
-            blob = " ".join(docs).lower()
-            must_any = [x.lower() for x in q.get("must_contain_any", [])]
-            forbidden = [x.lower() for x in q.get("must_not_contain", [])]
-            ok_any = any(m in blob for m in must_any) if must_any else True
-            bad_forb = any(m in blob for m in forbidden) if forbidden else False
-            top_doc = (metas[0] or {}).get("doc_id", "") if metas else ""
-            want_top1 = (q.get("expect_top1_doc_id") or "").strip()
-            top1_ok = True
-            if want_top1:
-                top1_ok = top_doc == want_top1
-            rec = {
-                "id": q.get("id"),
-                "question": text,
-                "top1_doc_id": top_doc,
-                "contains_expected": ok_any,
-                "hits_forbidden": bad_forb,
-                "top1_doc_matches": top1_ok if want_top1 else None,
-                "top_k_used": args.top_k,
-                "grading_criteria": q.get("grading_criteria", []),
-            }
+            qid = q.get("id", f"q_{i}")
+            print(f"  [{i}/{len(qs)}] Processing: {qid}")
+            
+            try:
+                res = col.query(query_texts=[text], n_results=args.top_k)
+                docs = (res.get("documents") or [[]])[0]
+                metas = (res.get("metadatas") or [[]])[0]
+                blob = " ".join(docs).lower()
+                
+                must_any = [x.lower() for x in q.get("must_contain_any", [])]
+                forbidden = [x.lower() for x in q.get("must_not_contain", [])]
+                ok_any = any(m in blob for m in must_any) if must_any else True
+                bad_forb = any(m in blob for m in forbidden) if forbidden else False
+                
+                top_doc = (metas[0] or {}).get("doc_id", "") if metas else ""
+                want_top1 = (q.get("expect_top1_doc_id") or "").strip()
+                top1_ok = True
+                if want_top1:
+                    top1_ok = top_doc == want_top1
+                
+                rec = {
+                    "id": qid,
+                    "question": text,
+                    "top1_doc_id": top_doc,
+                    "contains_expected": ok_any,
+                    "hits_forbidden": bad_forb,
+                    "top1_doc_matches": top1_ok if want_top1 else None,
+                    "top_k_used": args.top_k,
+                    "grading_criteria": q.get("grading_criteria", []),
+                    "status": "success"
+                }
+                
+                # Log summary for this question
+                status = "✓" if ok_any and not bad_forb and (not want_top1 or top1_ok) else "✗"
+                print(f"    {status} contains_expected={ok_any} hits_forbidden={bad_forb} top1_matches={top1_ok if want_top1 else 'N/A'}")
+                
+            except Exception as e:
+                print(f"    ✗ Error processing question: {e}")
+                rec = {
+                    "id": qid,
+                    "question": text,
+                    "error": str(e),
+                    "status": "error"
+                }
+            
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    print(f"Wrote {out}")
+    
+    print(f"✓ Successfully wrote grading results to {out}")
     return 0
 
 

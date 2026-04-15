@@ -11,7 +11,7 @@
 | Nguyễn Bình Minh | Retrieval Eval Owner | minhnguyen041104@gmail.com |
 | Lê Quang Minh | Grading / Final Evidence Owner | Mninh25@gmail.com|
 
-**Ngày nộp:**15-05-2026
+**Ngày nộp:**15-04-2026
 **Repo:** https://github.com/minh041104/C401-B3  
 **Độ dài khuyến nghị:** 600–1000 từ
 
