@@ -28,7 +28,7 @@
 > Nguồn raw là gì (CSV mẫu / export thật)? Chuỗi lệnh chạy end-to-end? `run_id` lấy ở đâu trong log?
 
 **Tóm tắt luồng:**
-Pipeline xử lý dữ liệu policy từ file CSV `policy_export_dirty.csv` với 10 bản ghi ban đầu. Sau quá trình cleaning và validation, đầu ra có 6 bản ghi sạch và 4 bản ghi bị quarantine. Dữ liệu được embed vào ChromaDB collection `day10_kb` với model `all-MiniLM-L6-v2`. Run ID được sinh tự động dựa trên timestamp: `2026-04-15T08-26Z`.
+Pipeline xử lý dữ liệu policy từ file CSV `policy_export_dirty.csv` với 10 bản ghi ban đầu. Sau quá trình cleaning và validation, đầu ra có 6 bản ghi sạch và 4 bản ghi bị quarantine. Dữ liệu được embed vào ChromaDB collection `day10_kb` với model `all-MiniLM-L6-v2`. Run ID được sinh tự động dựa trên timestamp: `2026-04-15T10-13Z`.
 
 **Lệnh chạy một dòng (copy từ README thực tế của nhóm):**
 ```bash
@@ -39,7 +39,7 @@ python etl_pipeline.py run
 - Raw records: 10
 - Cleaned records: 6  
 - Quarantine records: 4
-- Freshness status: FAIL (120.5h > 24h SLA)
+- Freshness status: FAIL (122.2h > 24h SLA)
 - Exit code: 0 (thành công)
 
 ---
@@ -52,9 +52,9 @@ python etl_pipeline.py run
 
 | Rule / Expectation mới (tên ngắn) | Trước (số liệu) | Sau / khi inject (số liệu) | Chứng cứ (log / CSV / commit) |
 |-----------------------------------|------------------|-----------------------------|-------------------------------|
-| refund_no_stale_14d_window | violations=0 | violations=0 | manifest_2026-04-15T08-26Z.json |
-| hr_leave_no_stale_10d_annual | violations=0 | violations=0 | manifest_2026-04-15T08-26Z.json |
-| each_critical_doc_has_min_chunks | missing_docs=[] | counts={'policy_refund_v4': 2, 'sla_p1_2026': 1, 'it_helpdesk_faq': 2, 'hr_leave_policy': 1} | manifest_2026-04-15T08-26Z.json |
+| refund_no_stale_14d_window | violations=0 | violations=0 | manifest_2026-04-15T10-13Z.json |
+| hr_leave_no_stale_10d_annual | violations=0 | violations=0 | manifest_2026-04-15T10-13Z.json |
+| each_critical_doc_has_min_chunks | missing_docs=[] | counts={'policy_refund_v4': 2, 'sla_p1_2026': 1, 'it_helpdesk_faq': 2, 'hr_leave_policy': 1} | manifest_2026-04-15T10-13Z.json |
 
 **Rule chính (baseline + mở rộng):**
 
@@ -97,7 +97,7 @@ Sử dụng dữ liệu demo với freshness check FAIL (120h > 24h SLA). Dữ l
 
 **Kết quả thực tế:**
 - Latest exported_at: 2026-04-10T08:00:00
-- Age: 120.5 giờ
+- Age: 122.2 giờ
 - **Status: FAIL** (vượt SLA 24h)
 - Lý do: freshness_grace_window_exceeded
 
