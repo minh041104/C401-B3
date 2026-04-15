@@ -82,21 +82,24 @@
 
 ## 4. Before / after retrieval (bắt buộc)
 
-> Đính kèm file `artifacts/eval/before_after_eval.csv` sau khi chạy Người 5 (eval_retrieval.py).
+> File: `artifacts/eval/before.csv` và `artifacts/eval/after.csv` (chạy bởi Người 5 — eval_retrieval.py).
+> LLM-judge: `artifacts/eval/after_judge.csv`.
 
 **Câu then chốt: `q_refund_window`**
 
-| Scenario | `contains_expected` | `hits_forbidden` | Ghi chú |
-|---|---|---|---|
-| **Before** (`--no-refund-fix --skip-validate`) | *(điền)* | yes | Còn chunk "14 ngày" |
-| **After** (pipeline chuẩn) | yes | no | Đã fix 7 ngày, E3 PASS |
+| Scenario | `top1_doc_id` | `contains_expected` | `hits_forbidden` | `llm_verdict` | Ghi chú |
+|---|---|---|---|---|---|
+| **Before** (`inject-bad` — `--no-refund-fix`) | `policy_refund_v4` | yes | **yes** | — | Chunk "14 ngày" còn trong index, top-k bị nhiễm |
+| **After** (pipeline chuẩn `sprint2-clean`) | `policy_refund_v4` | yes | **no** | `partial`* | Đã fix 7 ngày, E3 PASS |
+
+> \* LLM-judge trả `partial` vì context top-k còn thông tin từ bản policy cũ — xem `after_judge.csv` dòng `q_refund_window`. Cần re-chunk hoặc prune sâu hơn.
 
 **Merit: `q_leave_version` (HR conflict)**
 
-| Scenario | `contains_expected` | `hits_forbidden` | `top1_doc_id` |
-|---|---|---|---|
-| **Before** (stale HR 2025 còn trong index) | *(điền)* | yes | *(điền)* |
-| **After** (pipeline chuẩn) | yes | no | `hr_leave_policy` |
+| Scenario | `top1_doc_id` | `contains_expected` | `hits_forbidden` | `top1_doc_expected` | `llm_verdict` | Ghi chú |
+|---|---|---|---|---|---|---|
+| **Before** (`inject-bad`) | `hr_leave_policy` | yes | no | yes | — | Stale HR 2025 đã bị quarantine → không còn gây nhiễm |
+| **After** (pipeline chuẩn) | `hr_leave_policy` | yes | no | yes | `relevant` | 12 ngày phép 2026, E6 PASS |
 
 ---
 
