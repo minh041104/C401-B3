@@ -1,52 +1,98 @@
 # Data contract — Lab Day 10 (tiếp nối artifact CS + IT Helpdesk)
-# Sinh viên bổ sung owner, SLA freshness, và nguồn canonical.
+# Owner Người 4: Monitoring + Data Contract (Vinh).
 
 version: "1.0"
 dataset: "kb_chunk_export"
-owner_team: "__TODO__"
+owner_team: "Monitoring + Data Contract Owner (Vinh)"
+owner_contact: "vinh"
+description: "Cleaned knowledge-base chunks được publish vào vector store day10_kb."
 
 schema_cleaned:
   chunk_id:
     type: string
     required: true
-    description: "ID ổn định sau clean (thường hash hoặc doc_id + seq)"
+    description: "ID ổn định sau clean, sinh từ doc_id + sequence + hash nội dung."
   doc_id:
     type: string
     required: true
-    description: "Khóa logic tài liệu nguồn (vd policy_refund_v4)"
+    description: "Khóa logic tài liệu nguồn; phải nằm trong allowed_doc_ids."
   chunk_text:
     type: string
     required: true
     constraints:
       min_length: 8
+      max_recommended_length: 2000
+    description: "Nội dung chunk đã chuẩn hóa whitespace và sửa rule policy nếu cần."
   effective_date:
     type: date
     required: true
+    format: "YYYY-MM-DD"
+    description: "Ngày hiệu lực canonical của nội dung sau normalize."
   exported_at:
     type: datetime
     required: true
+    format: "YYYY-MM-DDTHH:MM:SS"
+    description: "Watermark dữ liệu dùng cho freshness; lấy max để ghi latest_exported_at trong manifest."
 
 quality_rules:
-  - id: "no_duplicate_chunk_text"
-    severity: "warn"
-  - id: "no_stale_refund_window"
-    description: "Không được để chunk policy refund chứa cửa sổ 14 ngày (lệch so với v4 = 7 ngày)"
+  - id: "allowed_doc_ids_only"
+    description: "doc_id ngoài allowlist không được publish."
     severity: "halt"
+    action: "quarantine"
+  - id: "exported_at_iso_or_quarantine"
+    description: "exported_at phải parse được ISO datetime trước khi vào cleaned."
+    severity: "halt"
+    action: "quarantine"
+  - id: "no_duplicate_chunk_text"
+    description: "Nội dung trùng theo doc_id + normalized text được giữ lại trong quarantine để audit."
+    severity: "warn"
+    action: "quarantine"
+  - id: "no_stale_refund_window"
+    description: "Không được để chunk policy refund chứa cửa sổ 14 ngày (lệch so với v4 = 7 ngày)."
+    severity: "halt"
+    action: "fix_or_halt"
+  - id: "hr_leave_min_effective_date"
+    description: "HR leave policy cũ hơn 2026-01-01 bị quarantine để tránh version conflict."
+    severity: "halt"
+    action: "quarantine"
 
 freshness:
-  measured_at: "publish"  # ingest | cleaned | publish
+  measured_at: "cleaned_export_watermark"  # ingest | cleaned_export_watermark | publish
+  timestamp_source: "manifest.latest_exported_at"
+  fallback_timestamp_source: "max(exported_at) trong cleaned summary nếu manifest có nhúng rows"
   sla_hours: 24
-  alert_channel: "__TODO__"
+  warn_after_hours: 48
+  alert_channel: "#kb-pipeline-alerts"
+  status_policy:
+    PASS: "age_hours <= sla_hours"
+    WARN: "sla_hours < age_hours <= warn_after_hours, hoặc thiếu data timestamp trong manifest"
+    FAIL: "manifest mất/lỗi, threshold config sai, hoặc age_hours > warn_after_hours"
 
 canonical_sources:
   - path: "data/docs/policy_refund_v4.txt"
     doc_id: "policy_refund_v4"
+    upstream_source: "policy/refund-v4.pdf"
+    department: "CS"
+    effective_date: "2026-02-01"
+    canonical: true
   - path: "data/docs/sla_p1_2026.txt"
     doc_id: "sla_p1_2026"
+    upstream_source: "support/sla-p1-2026.pdf"
+    department: "IT"
+    effective_date: "2026-01-15"
+    canonical: true
   - path: "data/docs/it_helpdesk_faq.txt"
     doc_id: "it_helpdesk_faq"
+    upstream_source: "support/helpdesk-faq.md"
+    department: "IT"
+    effective_date: "2026-01-20"
+    canonical: true
   - path: "data/docs/hr_leave_policy.txt"
     doc_id: "hr_leave_policy"
+    upstream_source: "hr/leave-policy-2026.pdf"
+    department: "HR"
+    effective_date: "2026-01-01"
+    canonical: true
 
 # Baseline allowlist export — nhóm mở rộng doc mới phải đồng bộ cleaning_rules + contract.
 allowed_doc_ids:
@@ -58,3 +104,5 @@ allowed_doc_ids:
 # Merit/Distinction: có thể đưa cutoff versioning vào env và tham chiếu ở đây (tránh hard-code trong code).
 policy_versioning:
   hr_leave_min_effective_date: "2026-01-01"
+  refund_canonical_doc_id: "policy_refund_v4"
+  refund_current_window_days: 7
