@@ -57,7 +57,8 @@ python etl_pipeline.py run
 |-----------------------------------|------------------|-----------------------------|-------------------------------|
 | refund_no_stale_14d_window | violations=0 | violations=0 | <img width="301" height="104" alt="{B82B91FB-A60A-448B-AC7F-DB08E1E59C55}" src="https://github.com/user-attachments/assets/7d166354-de70-4211-8f99-e35420c28f59" />|
 | hr_leave_no_stale_10d_annual | violations=0 | violations=0 |  <img width="297" height="101" alt="{A9330499-A159-4823-B051-5C694637220D}" src="https://github.com/user-attachments/assets/09222632-bdf3-45f0-9ee5-b90a20f807b5" />|
-| each_critical_doc_has_min_chunks | missing_docs=[] | counts={'policy_refund_v4': 2, 'sla_p1_2026': 1, 'it_helpdesk_faq': 2, 'hr_leave_policy': 1} |<img width="903" height="106" alt="{063B8381-E267-489E-9C12-37ACA163A854}" src="https://github.com/user-attachments/assets/14debeab-0283-4b60-b4af-b48ead0a1153" />|
+| each_critical_doc_has_min_chunks | missing_docs=[] | counts={'policy_refund_v4': 2, 'sla_p1_2026': 1, 'it_helpdesk_faq': 2, 'hr_leave_policy': 1} |<img width="790" height="102" alt="{1832565B-CFAD-4839-986B-672F48F6A009}" src="https://github.com/user-attachments/assets/b0a49139-32d1-4d6d-9b65-6ddbce6eb46c" />
+ />|
 
 **Rule chính (baseline + mở rộng):**
 
