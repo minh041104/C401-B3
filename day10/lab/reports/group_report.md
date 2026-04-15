@@ -44,6 +44,9 @@ python etl_pipeline.py run
 
 ---
 
+<img width="1025" height="389" alt="{E3861703-D5E2-491A-BB7E-DBD0E6296BAE}" src="https://github.com/user-attachments/assets/6c7a3c64-8787-4265-bc19-d7fec079aa9b" />
+
+
 ## 2. Cleaning & expectation (150–200 từ)
 
 > Baseline đã có nhiều rule (allowlist, ngày ISO, HR stale, refund, dedupe…). Nhóm thêm **≥3 rule mới** + **≥2 expectation mới**. Khai báo expectation nào **halt**.
@@ -52,9 +55,9 @@ python etl_pipeline.py run
 
 | Rule / Expectation mới (tên ngắn) | Trước (số liệu) | Sau / khi inject (số liệu) | Chứng cứ (log / CSV / commit) |
 |-----------------------------------|------------------|-----------------------------|-------------------------------|
-| refund_no_stale_14d_window | violations=0 | violations=0 | manifest_2026-04-15T10-13Z.json |
-| hr_leave_no_stale_10d_annual | violations=0 | violations=0 | manifest_2026-04-15T10-13Z.json |
-| each_critical_doc_has_min_chunks | missing_docs=[] | counts={'policy_refund_v4': 2, 'sla_p1_2026': 1, 'it_helpdesk_faq': 2, 'hr_leave_policy': 1} | manifest_2026-04-15T10-13Z.json |
+| refund_no_stale_14d_window | violations=0 | violations=0 | <img width="301" height="104" alt="{B82B91FB-A60A-448B-AC7F-DB08E1E59C55}" src="https://github.com/user-attachments/assets/7d166354-de70-4211-8f99-e35420c28f59" />|
+| hr_leave_no_stale_10d_annual | violations=0 | violations=0 |  <img width="297" height="101" alt="{A9330499-A159-4823-B051-5C694637220D}" src="https://github.com/user-attachments/assets/09222632-bdf3-45f0-9ee5-b90a20f807b5" />|
+| each_critical_doc_has_min_chunks | missing_docs=[] | counts={'policy_refund_v4': 2, 'sla_p1_2026': 1, 'it_helpdesk_faq': 2, 'hr_leave_policy': 1} |<img width="903" height="106" alt="{063B8381-E267-489E-9C12-37ACA163A854}" src="https://github.com/user-attachments/assets/14debeab-0283-4b60-b4af-b48ead0a1153" />|
 
 **Rule chính (baseline + mở rộng):**
 
@@ -64,12 +67,16 @@ python etl_pipeline.py run
 
 **Ví dụ expectation hoạt động:**
 Tất cả 9 expectation đều PASS (halt=0, warn=0). Không có expectation nào fail trong run này. Các expectation critical như `effective_date_iso_yyyy_mm_dd` và `no_duplicate_chunk_ids` đều đạt chuẩn.
+<img width="313" height="108" alt="{E60E045B-8DF2-4888-9B59-3B4C1A506E58}" src="https://github.com/user-attachments/assets/fdd8a67e-3b64-41ab-b2a0-b4b492fb69ec" />
+<img width="361" height="108" alt="{B98DD882-06B7-488C-A5F5-684E9D168256}" src="https://github.com/user-attachments/assets/61c16783-da21-45f5-aa2f-5b7882ececf0" />
+
 
 ---
 
 ## 3. Before / after ảnh hưởng retrieval hoặc agent (200–250 từ)
 
 > Bắt buộc: inject corruption (Sprint 3) — mô tả + dẫn `artifacts/eval/…` hoặc log.
+<img width="312" height="244" alt="{D88854ED-A080-46AD-92FB-18E6D6DF2BA9}" src="https://github.com/user-attachments/assets/4efa3839-d398-4a76-8794-8cc6ce1c7373" />
 
 **Kịch bản inject:**
 Sử dụng dữ liệu demo với freshness check FAIL (120h > 24h SLA). Dữ liệu được xử lý qua pipeline và đánh giá retrieval quality với 3 câu hỏi grading.
@@ -83,6 +90,7 @@ Sử dụng dữ liệu demo với freshness check FAIL (120h > 24h SLA). Dữ l
 - 2/3 câu đạt yêu cầu (Pass/Merit level)
 - Câu gq_d10_01 bị hits_forbidden do retrieval trả về document có chứa từ khóa không mong muốn
 - Cần cải thiện filtering để loại bỏ forbidden terms
+<img width="931" height="401" alt="{055DED2F-B243-4DA1-8A02-89DC6D04F96C}" src="https://github.com/user-attachments/assets/f702f50f-a4a1-4632-b7fc-74e995bee0c3" />
 
 ---
 
